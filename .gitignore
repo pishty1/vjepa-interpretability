@@ -1,0 +1,5 @@
+.venv
+outputs
+videos
+__pycache__
+todo.txt
