@@ -5,11 +5,11 @@ from pathlib import Path
 
 from .config import DEFAULT_OUTPUT_ROOT
 from .io_utils import ensure_dir, load_metadata, make_run_id, resolve_model_run, run_root, utc_now_iso, write_json
-from .runtime import import_runtime_dependencies, load_window_outputs, write_heatmap_png
+from .runtime import import_runtime_dependencies, load_window_outputs, write_stacked_latent_comparison_jpg
 
 
 def add_heatmaps_parser(subparsers) -> None:
-    parser = subparsers.add_parser("heatmaps", help="Render edge-slice heatmaps for each extracted window.")
+    parser = subparsers.add_parser("heatmaps", help="Render stacked latent-difference heatmaps for each extracted window.")
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT, help="Root output directory.")
     parser.add_argument("--extract-run-id", default=None, help="Extraction run ID. Defaults to the latest extraction run.")
     parser.add_argument("--model-run-id", default=None, help="Model run ID. Defaults to the latest model run for the selected extraction.")
@@ -33,23 +33,64 @@ def command_heatmaps(args) -> int:
         "source_model_run_id": model_run_dir.name,
         "source_extract_run_id": model_metadata.get("source_extract_run_id"),
         "windows": [],
+        "skipped": [],
     }
+
+    latent_shift = int(model_metadata.get("config", {}).get("latent_shift", 0) or 0)
 
     for item in tqdm(outputs, desc="Heatmaps"):
         window = item["window"]
-        heatmap = item["heatmap"]
+        boundary_latent_diffs = item.get("boundary_latent_diffs")
+        if boundary_latent_diffs is None:
+            metadata["skipped"].append(
+                {
+                    "window_id": window["window_id"],
+                    "reason": "missing_boundary_latent_diffs",
+                }
+            )
+            continue
         target_dir = ensure_dir(run_dir / window["video_slug"] / Path(window["relative_window_dir"]).name)
-        shared_start_path = target_dir / "shared_start.png"
-        shared_end_path = target_dir / "shared_end.png"
-        write_heatmap_png(cv2, np, heatmap[0], shared_start_path, "shared_start")
-        write_heatmap_png(cv2, np, heatmap[-1], shared_end_path, "shared_end")
-        metadata["windows"].append(
-            {
-                "window_id": window["window_id"],
-                "video": window["video"],
-                "shared_start_png": str(shared_start_path.relative_to(run_dir)),
-                "shared_end_png": str(shared_end_path.relative_to(run_dir)),
-            }
+        comparison_path = target_dir / "latent_comparison.jpg"
+        plot_info = write_stacked_latent_comparison_jpg(
+            cv2,
+            np,
+            boundary_latent_diffs[0],
+            boundary_latent_diffs[-1],
+            comparison_path,
+        )
+        overlap_slices = int(window.get("overlap_slices", 0))
+        compared_slices = {
+            "start": {
+                "overlap_slice_index": 0,
+                "left_time_index": latent_shift,
+                "right_time_index": 0,
+            },
+            "end": {
+                "overlap_slice_index": max(overlap_slices - 1, 0),
+                "left_time_index": max(latent_shift + overlap_slices - 1, 0),
+                "right_time_index": max(overlap_slices - 1, 0),
+            },
+        }
+        window_metadata = {
+            "window_id": window["window_id"],
+            "video": window["video"],
+            "comparison_jpg": str(comparison_path.relative_to(run_dir)),
+            "plot": {
+                "token_count": int(plot_info["matrix_shape"][0]),
+                "embedding_dim": int(plot_info["matrix_shape"][1]),
+                "grid_size": window.get("grid_size"),
+                "overlap_latent_steps": overlap_slices,
+                "compared_slices": compared_slices,
+                "color_limit": float(plot_info["color_limit"]),
+            },
+        }
+        write_json(target_dir / "window_heatmap_metadata.json", window_metadata)
+        metadata["windows"].append(window_metadata)
+
+    if not metadata["windows"]:
+        raise RuntimeError(
+            "No latent comparison heatmaps were rendered. "
+            "This model run does not include boundary latent differences; re-run `run-model` with the updated pipeline first."
         )
 
     write_json(run_dir / "metadata.json", metadata)

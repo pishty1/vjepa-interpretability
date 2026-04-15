@@ -211,23 +211,85 @@ def write_heatmap_png(cv2, np, heatmap, output_path: Path, label: str) -> None:
         raise RuntimeError(f"Failed to write heatmap image: {output_path}")
 
 
+def _signed_matrix_to_bgr(np, matrix, color_limit: float):
+    matrix = np.asarray(matrix, dtype=np.float32)
+    if matrix.ndim != 2:
+        raise ValueError(f"Expected a 2D latent comparison matrix, received shape {matrix.shape}.")
+    if not np.isfinite(color_limit) or color_limit <= 0:
+        color_limit = float(np.max(np.abs(matrix))) if matrix.size else 0.0
+    if color_limit <= 0:
+        color_limit = 1.0
+    normalized = np.clip(matrix / color_limit, -1.0, 1.0)
+    intensity = np.rint(np.abs(normalized) * 255.0).astype(np.uint8)
+    colored = np.full(matrix.shape + (3,), 255, dtype=np.uint8)
+    positive = normalized > 0
+    negative = normalized < 0
+    colored[..., 0] = np.where(positive, 255 - intensity, colored[..., 0])
+    colored[..., 1] = np.where(positive, 255 - intensity, colored[..., 1])
+    colored[..., 1] = np.where(negative, 255 - intensity, colored[..., 1])
+    colored[..., 2] = np.where(negative, 255 - intensity, colored[..., 2])
+    return colored
+
+
+def _build_labeled_panel(cv2, np, matrix, label: str, color_limit: float):
+    image = _signed_matrix_to_bgr(np, matrix, color_limit)
+    label_band = np.full((36, image.shape[1], 3), 24, dtype=np.uint8)
+    cv2.putText(label_band, label, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (245, 245, 245), 1, cv2.LINE_AA)
+    return np.concatenate([label_band, image], axis=0)
+
+
+def write_stacked_latent_comparison_jpg(cv2, np, first_matrix, last_matrix, output_path: Path):
+    first_matrix = np.asarray(first_matrix, dtype=np.float32)
+    last_matrix = np.asarray(last_matrix, dtype=np.float32)
+    if first_matrix.shape != last_matrix.shape:
+        raise ValueError(
+            "First and last latent comparison matrices must share the same shape, "
+            f"received {first_matrix.shape} and {last_matrix.shape}."
+        )
+    color_limit = float(max(np.max(np.abs(first_matrix)), np.max(np.abs(last_matrix)), 1e-8))
+    first_panel = _build_labeled_panel(
+        cv2,
+        np,
+        first_matrix,
+        f"first overlap diff | {first_matrix.shape[0]} tokens x {first_matrix.shape[1]} dims",
+        color_limit,
+    )
+    last_panel = _build_labeled_panel(
+        cv2,
+        np,
+        last_matrix,
+        f"last overlap diff | {last_matrix.shape[0]} tokens x {last_matrix.shape[1]} dims",
+        color_limit,
+    )
+    separator = np.full((10, first_panel.shape[1], 3), 40, dtype=np.uint8)
+    composite = np.concatenate([first_panel, separator, last_panel], axis=0)
+    ok = cv2.imwrite(str(output_path), composite, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    if not ok:
+        raise RuntimeError(f"Failed to write latent comparison image: {output_path}")
+    return {
+        "matrix_shape": [int(first_matrix.shape[0]), int(first_matrix.shape[1])],
+        "color_limit": color_limit,
+    }
+
+
 def load_window_outputs(np, model_run_dir: Path, metadata: dict):
     outputs = []
     for window in metadata.get("windows", []):
         npz_path = model_run_dir / window["output_npz"]
         if not npz_path.exists():
             continue
-        data = np.load(npz_path)
-        outputs.append(
-            {
-                "window": window,
-                "spatial_mean_abs": data["spatial_mean_abs"],
-                "spatial_mean_signed": data["spatial_mean_signed"],
-                "slice_magnitudes": data["slice_magnitudes"],
-                "heatmap": data["heatmap"],
-                "motion_score": float(data["motion_score"]),
-            }
-        )
+        with np.load(npz_path) as data:
+            outputs.append(
+                {
+                    "window": window,
+                    "spatial_mean_abs": data["spatial_mean_abs"],
+                    "spatial_mean_signed": data["spatial_mean_signed"],
+                    "slice_magnitudes": data["slice_magnitudes"],
+                    "heatmap": data["heatmap"],
+                    "boundary_latent_diffs": data["boundary_latent_diffs"] if "boundary_latent_diffs" in data else None,
+                    "motion_score": float(data["motion_score"]),
+                }
+            )
     if not outputs:
         raise RuntimeError(f"No model outputs found in {model_run_dir}")
     return outputs

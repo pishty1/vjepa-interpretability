@@ -132,6 +132,13 @@ def command_run_model(args) -> int:
             delta = overlap_a - overlap_b
             abs_delta = np.abs(delta[0])
             signed_delta = delta[0]
+            boundary_latent_diffs = np.stack(
+                [
+                    signed_delta[0].reshape(-1, signed_delta.shape[-1]),
+                    signed_delta[-1].reshape(-1, signed_delta.shape[-1]),
+                ],
+                axis=0,
+            )
             spatial_mean_abs = abs_delta.mean(axis=(1, 2))
             spatial_mean_signed = signed_delta.mean(axis=(1, 2))
             slice_magnitudes = spatial_mean_abs.mean(axis=1)
@@ -146,6 +153,7 @@ def command_run_model(args) -> int:
                 spatial_mean_signed=spatial_mean_signed,
                 slice_magnitudes=slice_magnitudes,
                 heatmap=heatmap,
+                boundary_latent_diffs=boundary_latent_diffs,
                 motion_score=np.array(motion_score, dtype=np.float32),
             )
 
@@ -158,6 +166,10 @@ def command_run_model(args) -> int:
                 "overlap_slices": overlap_len,
                 "grid_size": [grid_size, grid_size],
                 "embedding_dim": int(features_a.shape[-1]),
+                "boundary_latent_matrix_shape": [
+                    int(boundary_latent_diffs.shape[1]),
+                    int(boundary_latent_diffs.shape[2]),
+                ],
                 "motion_score": motion_score,
             }
             write_json(target_dir / "window_output_metadata.json", window_record)

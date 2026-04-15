@@ -3,3 +3,5 @@ outputs
 videos
 __pycache__
 todo.txt
+.vscode
+.DS_Store
