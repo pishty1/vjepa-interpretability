@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -13,10 +12,9 @@ def import_runtime_dependencies():
     import numpy as np
     import torch
     import torch.nn.functional as F
-    from scipy.stats import t as student_t
     from tqdm.auto import tqdm
 
-    return cv2, np, torch, F, student_t, tqdm
+    return cv2, np, torch, F, None, tqdm
 
 
 def choose_device(torch, requested: str):
@@ -143,35 +141,6 @@ def reshape_tokens(np, tokens, grid_size: int):
     return tokens.reshape(batch, temporal_slices, grid_size, grid_size, embed_dim)
 
 
-def benjamini_hochberg(np, p_values):
-    flat = np.asarray(p_values, dtype=np.float64).reshape(-1)
-    n = flat.size
-    order = np.argsort(flat)
-    ranked = flat[order]
-    adjusted = ranked * n / np.arange(1, n + 1)
-    adjusted = np.minimum.accumulate(adjusted[::-1])[::-1]
-    adjusted = np.clip(adjusted, 0.0, 1.0)
-    result = np.empty_like(adjusted)
-    result[order] = adjusted
-    return result.reshape(p_values.shape)
-
-
-def paired_t_from_stack(np, student_t, signed_stack):
-    mean_diff = signed_stack.mean(axis=0)
-    if signed_stack.shape[0] <= 1:
-        return np.zeros_like(mean_diff), np.ones_like(mean_diff)
-    sample_std = signed_stack.std(axis=0, ddof=1)
-    n = signed_stack.shape[0]
-    standard_error = sample_std / math.sqrt(n)
-    t_stat = np.divide(mean_diff, standard_error, out=np.zeros_like(mean_diff), where=standard_error > 0)
-    zero_se_nonzero_mean = (standard_error == 0) & (mean_diff != 0)
-    t_stat[zero_se_nonzero_mean] = np.sign(mean_diff[zero_se_nonzero_mean]) * np.inf
-    p_value = student_t.sf(np.abs(t_stat), df=n - 1) * 2.0
-    p_value = np.where((standard_error == 0) & (mean_diff == 0), 1.0, p_value)
-    p_value = np.where(zero_se_nonzero_mean, 0.0, p_value)
-    return t_stat, p_value
-
-
 def save_rgb_frames(cv2, frames, target_dir: Path, image_format: str) -> list[str]:
     target_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".png" if image_format == "png" else ".jpg"
@@ -234,23 +203,6 @@ def load_model(torch, checkpoint_path: Path, repo_dir: str | None, clip_num_fram
     for parameter in encoder.parameters():
         parameter.requires_grad = False
     return encoder, checkpoint, str(load_msg)
-
-
-def write_heatmap_png(cv2, np, heatmap, output_path: Path, label: str) -> None:
-    heatmap = np.asarray(heatmap, dtype=np.float32)
-    normalized = cv2.normalize(heatmap, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-    normalized = normalized.astype(np.uint8)
-    colored = cv2.applyColorMap(normalized, cv2.COLORMAP_VIRIDIS)
-    scale = max(1, 384 // max(colored.shape[0], colored.shape[1]))
-    colored = cv2.resize(
-        colored,
-        (colored.shape[1] * scale, colored.shape[0] * scale),
-        interpolation=cv2.INTER_NEAREST,
-    )
-    cv2.putText(colored, label, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-    ok = cv2.imwrite(str(output_path), colored)
-    if not ok:
-        raise RuntimeError(f"Failed to write heatmap image: {output_path}")
 
 
 def _signed_matrix_to_bgr(np, matrix, color_limit: float):

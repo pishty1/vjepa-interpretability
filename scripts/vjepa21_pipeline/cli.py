@@ -15,7 +15,7 @@ from .model_stage import command_run_model
 def add_run_pipeline_parser(subparsers) -> None:
     parser = subparsers.add_parser(
         "run-pipeline",
-        help="Extract windows, run the model, and render heatmaps in one command.",
+        help="Run the full temporal analysis pipeline.",
     )
     parser.add_argument("--video-dir", default=DEFAULT_VIDEO_DIR, help="Directory containing videos.")
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT, help="Root output directory.")
@@ -117,7 +117,7 @@ def command_run_pipeline(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the V-JEPA 2.1 pipeline through a single simplified command."
+        description="Run the V-JEPA 2.1 pipeline."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     add_run_pipeline_parser(subparsers)

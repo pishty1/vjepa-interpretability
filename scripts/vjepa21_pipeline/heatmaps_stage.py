@@ -81,7 +81,7 @@ def command_heatmaps(args) -> int:
     if not metadata["windows"]:
         raise RuntimeError(
             "No latent comparison heatmaps were rendered. "
-            "This model run does not include boundary latent differences; re-run `run-model` with the updated pipeline first."
+            "This model run does not include boundary latent differences; regenerate the model outputs with a current pipeline run first."
         )
 
     write_json(run_dir / "metadata.json", metadata)

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import csv
 import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 from .config import RUN_FOLDERS, VIDEO_EXTENSIONS
 
@@ -30,14 +28,6 @@ def ensure_dir(path: Path) -> Path:
 
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
-
-
-def write_csv(path: Path, rows: Iterable[dict], fieldnames: list[str]) -> None:
-    with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
 
 
 def run_root(output_root: Path, stage: str) -> Path:

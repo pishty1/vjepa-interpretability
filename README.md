@@ -1,24 +1,12 @@
 # V-JEPA 2.1 Pipeline
 
-This project now runs through one public command: `run-pipeline`.
-
-Internally, the pipeline:
-
-1. samples random sliding-window pairs from videos in `videos/`
-2. runs the V-JEPA encoder on each sampled pair
-3. writes latent-difference heatmaps to `outputs/`
-
-The user does not need to run `extract`, `run-model`, `heatmaps`, or `stats` separately.
-
-## What you provide
-
 To run the pipeline, provide these inputs:
 
 - `--frames`: number of frames in each window, must be even
-- `--shift`: frame offset between the two windows, must be even
+- `--shift`: frame offset between the two windows, must be even and defaults to `2`
 - `--experiments`: total number of random window comparisons to run
 
-If you run with `--experiments 10`, the pipeline samples `10` random valid sliding-window comparisons across the videos under `videos/`, using random videos and random valid starting frames.
+If you run with `--experiments 10`, the pipeline samples up to `10` random valid sliding-window comparisons across the videos under `videos/`, using random videos and random valid starting frames.
 
 ## Defaults
 
@@ -27,6 +15,8 @@ If you run with `--experiments 10`, the pipeline samples `10` random valid slidi
 - `--video-dir` defaults to `/Users/pishty/ws/vjepa2.1/videos`
 - `--output-root` defaults to `/Users/pishty/ws/vjepa2.1/outputs`
 - `--checkpoint` defaults to `/Users/pishty/ws/vjepa-gradio-playground/checkpoints/vjepa2_1_vitb_dist_vitG_384.pt`
+
+The pipeline writes only the extraction, model, and heatmap outputs needed for the current workflow.
 
 ## Install
 
