@@ -1,4 +1,4 @@
-# V-JEPA 2.1 Pipeline
+# V-JEPA 2.1 sliding windows
 
 [![example output](latent_comparison.jpg)](latent_comparison.jpg)
 
