@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
+from functools import lru_cache
 from pathlib import Path
 
-from .config import FRAME_EXTENSIONS, IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from .config import FRAME_EXTENSIONS
 
 
 def import_runtime_dependencies():
@@ -48,25 +50,73 @@ def decode_video(cv2, video_path: Path):
     return frames, fps
 
 
-def resize_center_crop(torch, F, video, crop_size: int):
-    short_side = int(round((256.0 / 224.0) * crop_size))
-    _, _, height, width = video.shape
-    scale = short_side / min(height, width)
-    resized_height = max(crop_size, int(round(height * scale)))
-    resized_width = max(crop_size, int(round(width * scale)))
-    video = F.interpolate(video, size=(resized_height, resized_width), mode="bilinear", align_corners=False)
-    top = max((resized_height - crop_size) // 2, 0)
-    left = max((resized_width - crop_size) // 2, 0)
-    return video[:, :, top : top + crop_size, left : left + crop_size]
+@lru_cache(maxsize=None)
+def load_video_processor(model_name: str):
+    from transformers import AutoVideoProcessor
+
+    return AutoVideoProcessor.from_pretrained(model_name)
 
 
-def preprocess_clip(torch, F, frames, crop_size: int):
-    video = torch.from_numpy(frames).permute(0, 3, 1, 2).to(torch.float32) / 255.0
-    video = resize_center_crop(torch, F, video, crop_size=crop_size)
-    mean = torch.tensor(IMAGENET_DEFAULT_MEAN, dtype=video.dtype).view(1, 3, 1, 1)
-    std = torch.tensor(IMAGENET_DEFAULT_STD, dtype=video.dtype).view(1, 3, 1, 1)
-    video = (video - mean) / std
-    return video.permute(1, 0, 2, 3).contiguous()
+def _extract_square_size(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        height = value.get("height")
+        width = value.get("width")
+        if height is not None or width is not None:
+            if height != width:
+                raise ValueError(f"Expected a square video crop, received crop_size={value!r}.")
+            return int(height) if height is not None else None
+        shortest_edge = value.get("shortest_edge")
+        if shortest_edge is not None:
+            return int(shortest_edge)
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        if value[0] != value[1]:
+            raise ValueError(f"Expected a square video crop, received crop_size={value!r}.")
+        return int(value[0])
+    height = getattr(value, "height", None)
+    width = getattr(value, "width", None)
+    if height is not None or width is not None:
+        if height != width:
+            raise ValueError(f"Expected a square video crop, received crop_size={value!r}.")
+        return int(height) if height is not None else None
+    shortest_edge = getattr(value, "shortest_edge", None)
+    if shortest_edge is not None:
+        return int(shortest_edge)
+    return int(value)
+
+
+def get_video_processor_crop_size(processor) -> int | None:
+    crop_size = getattr(processor, "crop_size", None)
+    if crop_size is not None:
+        return _extract_square_size(crop_size)
+    size = getattr(processor, "size", None)
+    if size is not None:
+        return _extract_square_size(size)
+    return None
+
+
+def normalize_video_processor_output(torch, tensor):
+    if tensor.ndim != 5:
+        raise ValueError(f"Expected a 5D video tensor, received shape {tuple(tensor.shape)}.")
+    if tensor.shape[1] == 3:
+        return tensor.contiguous()
+    if tensor.shape[2] == 3:
+        return tensor.permute(0, 2, 1, 3, 4).contiguous()
+    raise ValueError(f"Unable to infer channel axis from output shape {tuple(tensor.shape)}.")
+
+
+def preprocess_clip(processor, torch, frames):
+    video = frames if isinstance(frames, torch.Tensor) else torch.from_numpy(frames)
+    if video.ndim != 4:
+        raise ValueError(f"Expected a 4D video input, received shape {tuple(video.shape)}.")
+    if video.shape[-1] == 3:
+        video = video.permute(0, 3, 1, 2)
+    elif video.shape[1] != 3:
+        raise ValueError(f"Expected channel-first or channel-last RGB video, received shape {tuple(video.shape)}.")
+    video = video.contiguous()
+    result = processor(video, return_tensors="pt")
+    return normalize_video_processor_output(torch, result["pixel_values_videos"])
 
 
 def to_numpy_features(np, tensor):

@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .config import DEFAULT_CHECKPOINT, DEFAULT_OUTPUT_ROOT
-from .io_utils import ensure_dir, load_metadata, resolve_extract_run, run_root, utc_now_iso, write_json, make_run_id
+from .io_utils import ensure_dir, load_metadata, make_run_id, resolve_extract_run, run_root, utc_now_iso, write_json
 from .runtime import (
     choose_device,
     compute_motion_score,
+    get_video_processor_crop_size,
     import_runtime_dependencies,
     load_model,
+    load_video_processor,
     preprocess_clip,
     read_rgb_frames,
     reshape_tokens,
@@ -17,21 +18,8 @@ from .runtime import (
 )
 
 
-def add_model_parser(subparsers) -> None:
-    parser = subparsers.add_parser("run-model", help="Run V-JEPA on an extracted window set.")
-    parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT, help="Root output directory.")
-    parser.add_argument("--extract-run-id", default=None, help="Extraction run ID. Defaults to the latest extraction run.")
-    parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT, help="Path to the local V-JEPA 2.1 checkpoint.")
-    parser.add_argument("--repo-dir", default=None, help="Optional local clone of `facebookresearch/vjepa2`.")
-    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"], help="Torch device.")
-    parser.add_argument("--crop-size", type=int, default=384, help="Input crop size.")
-    parser.add_argument("--patch-size", type=int, default=16, help="Spatial patch size.")
-    parser.add_argument("--tubelet-size", type=int, default=2, help="Temporal tubelet size.")
-    parser.set_defaults(func=command_run_model)
-
-
 def command_run_model(args) -> int:
-    cv2, np, torch, F, _, tqdm = import_runtime_dependencies()
+    cv2, np, torch, _, _, tqdm = import_runtime_dependencies()
 
     output_root = Path(args.output_root).expanduser().resolve()
     checkpoint_path = Path(args.checkpoint).expanduser().resolve()
@@ -41,6 +29,14 @@ def command_run_model(args) -> int:
         raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
     if args.crop_size % args.patch_size != 0:
         raise ValueError("`crop-size` must be divisible by `patch-size`.")
+
+    video_processor = load_video_processor(args.hf_model)
+    processor_crop_size = get_video_processor_crop_size(video_processor)
+    if processor_crop_size is not None and int(args.crop_size) != processor_crop_size:
+        raise ValueError(
+            "`crop-size` must match the Hugging Face AutoVideoProcessor crop size. "
+            f"Received crop_size={args.crop_size}, processor crop_size={processor_crop_size}."
+        )
 
     clip_num_frames = int(extract_metadata["config"]["clip_num_frames"])
     latent_shift = 0
@@ -68,10 +64,12 @@ def command_run_model(args) -> int:
         "created_at": utc_now_iso(),
         "source_extract_run_id": extract_run_dir.name,
         "checkpoint": str(checkpoint_path),
+        "hf_model": args.hf_model,
         "repo_dir": args.repo_dir,
         "device": str(device),
         "config": {
             "crop_size": args.crop_size,
+            "processor_crop_size": processor_crop_size,
             "patch_size": args.patch_size,
             "tubelet_size": args.tubelet_size,
             "clip_num_frames": clip_num_frames,
@@ -97,8 +95,8 @@ def command_run_model(args) -> int:
                 metadata["skipped"].append({"window_id": window["window_id"], "reason": f"frame_load_failed:{exc}"})
                 continue
 
-            batch_a = preprocess_clip(torch, F, np.stack(clip_a_frames, axis=0), crop_size=args.crop_size).unsqueeze(0).to(device)
-            batch_b = preprocess_clip(torch, F, np.stack(clip_b_frames, axis=0), crop_size=args.crop_size).unsqueeze(0).to(device)
+            batch_a = preprocess_clip(video_processor, torch, np.stack(clip_a_frames, axis=0)).to(device)
+            batch_b = preprocess_clip(video_processor, torch, np.stack(clip_b_frames, axis=0)).to(device)
             features_a = reshape_tokens(np, to_numpy_features(np, encoder(batch_a)), grid_size=grid_size)
             features_b = reshape_tokens(np, to_numpy_features(np, encoder(batch_b)), grid_size=grid_size)
 

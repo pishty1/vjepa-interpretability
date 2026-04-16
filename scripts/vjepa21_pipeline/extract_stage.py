@@ -2,25 +2,12 @@ from __future__ import annotations
 
 import json
 import random
+from bisect import bisect_right
+from collections import defaultdict
 from pathlib import Path
 
-from .config import DEFAULT_OUTPUT_ROOT, DEFAULT_VIDEO_DIR
-from .io_utils import discover_videos, ensure_dir, make_run_id, slugify_path, utc_now_iso, write_json, run_root
+from .io_utils import discover_videos, ensure_dir, make_run_id, run_root, slugify_path, utc_now_iso, write_json
 from .runtime import decode_video, import_runtime_dependencies, save_rgb_frames
-
-
-def add_extract_parser(subparsers) -> None:
-    parser = subparsers.add_parser("extract", help="Extract paired 40-frame sliding windows from videos.")
-    parser.add_argument("--video-dir", default=DEFAULT_VIDEO_DIR, help="Directory containing videos.")
-    parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT, help="Root output directory.")
-    parser.add_argument("--seed", type=int, default=7, help="Random seed.")
-    parser.add_argument("--max-videos", type=int, default=0, help="Limit the number of videos. `0` means all videos.")
-    parser.add_argument("--windows-per-video", type=int, default=10, help="Paired sliding windows sampled per video.")
-    parser.add_argument("--clip-num-frames", type=int, default=40, help="Frames in each extracted window.")
-    parser.add_argument("--sampling-stride", type=int, default=1, help="Stride in decoded frames within each window.")
-    parser.add_argument("--window-shift-frames", type=int, default=2, help="Raw-frame offset between clip A and clip B.")
-    parser.add_argument("--save-format", default="jpg", choices=["jpg", "png"], help="Image format for saved frames.")
-    parser.set_defaults(func=command_extract)
 
 
 def command_extract(args) -> int:
@@ -29,18 +16,27 @@ def command_extract(args) -> int:
     random.seed(args.seed)
     np.random.seed(args.seed)
 
+    if args.clip_num_frames <= 0:
+        raise ValueError("`frames` must be positive.")
+    if args.clip_num_frames % 2 != 0:
+        raise ValueError("`frames` must be an even number.")
+    if args.sampling_stride <= 0:
+        raise ValueError("`sampling-stride` must be positive.")
+    if args.window_shift_frames <= 0:
+        raise ValueError("`shift` must be positive.")
+    if args.window_shift_frames % 2 != 0:
+        raise ValueError("`shift` must be an even number.")
+    if args.num_experiments <= 0:
+        raise ValueError("`experiments` must be positive.")
+
     video_dir = Path(args.video_dir).expanduser().resolve()
     output_root = Path(args.output_root).expanduser().resolve()
     if not video_dir.exists():
         raise FileNotFoundError(f"Video directory does not exist: {video_dir}")
 
     videos = discover_videos(video_dir)
-    if args.max_videos > 0:
-        videos = videos[: args.max_videos]
     if not videos:
         raise FileNotFoundError(f"No videos found under {video_dir}")
-    if args.window_shift_frames < 0:
-        raise ValueError("`window-shift-frames` must be non-negative.")
 
     run_id = make_run_id("extract")
     run_dir = ensure_dir(run_root(output_root, "extract") / run_id)
@@ -52,7 +48,7 @@ def command_extract(args) -> int:
         "video_dir": str(video_dir),
         "config": {
             "seed": args.seed,
-            "windows_per_video": args.windows_per_video,
+            "num_experiments": args.num_experiments,
             "clip_num_frames": args.clip_num_frames,
             "sampling_stride": args.sampling_stride,
             "window_shift_frames": args.window_shift_frames,
@@ -63,8 +59,7 @@ def command_extract(args) -> int:
         "skipped": [],
     }
 
-    total_windows = 0
-    processed_videos = 0
+    eligible_videos = []
     for video_index, video_path in enumerate(tqdm(videos, desc="Extract videos")):
         try:
             frames, fps = decode_video(cv2, video_path)
@@ -78,15 +73,52 @@ def command_extract(args) -> int:
             metadata["skipped"].append({"video": str(video_path), "reason": f"too_short:{total_frames}"})
             continue
 
-        processed_videos += 1
-        candidate_starts = list(range(max_start + 1))
-        if len(candidate_starts) > args.windows_per_video:
-            starts = sorted(random.sample(candidate_starts, args.windows_per_video))
-        else:
-            starts = candidate_starts
-
         relative_video = video_path.relative_to(video_dir)
         video_slug = slugify_path(str(relative_video.with_suffix("")))
+        eligible_videos.append(
+            {
+                "video_index": video_index,
+                "video_path": video_path,
+                "relative_video": relative_video,
+                "video_slug": video_slug,
+                "fps": fps,
+                "frames": frames,
+                "total_frames": total_frames,
+                "candidate_count": max_start + 1,
+            }
+        )
+
+    if not eligible_videos:
+        raise RuntimeError("No videos are long enough for the requested frame count and shift.")
+
+    total_candidates = sum(item["candidate_count"] for item in eligible_videos)
+    selected_count = min(args.num_experiments, total_candidates)
+    selected_offsets = sorted(random.sample(range(total_candidates), selected_count))
+    cumulative_counts = []
+    running_total = 0
+    for item in eligible_videos:
+        running_total += item["candidate_count"]
+        cumulative_counts.append(running_total)
+
+    selected_by_video = defaultdict(list)
+    for global_offset in selected_offsets:
+        video_bucket = bisect_right(cumulative_counts, global_offset)
+        previous_total = 0 if video_bucket == 0 else cumulative_counts[video_bucket - 1]
+        start_frame = global_offset - previous_total
+        selected_by_video[video_bucket].append(start_frame)
+
+    total_windows = 0
+    processed_video_indexes = set()
+    for video_bucket, starts in selected_by_video.items():
+        item = eligible_videos[video_bucket]
+        video_index = item["video_index"]
+        video_path = item["video_path"]
+        relative_video = item["relative_video"]
+        video_slug = item["video_slug"]
+        fps = item["fps"]
+        frames = item["frames"]
+        total_frames = item["total_frames"]
+        processed_video_indexes.add(video_index)
         video_dir_out = ensure_dir(run_dir / video_slug)
 
         for local_index, start in enumerate(starts):
@@ -133,7 +165,7 @@ def command_extract(args) -> int:
             metadata["windows"].append(window_metadata)
             total_windows += 1
 
-    metadata["processed_videos"] = processed_videos
+    metadata["processed_videos"] = len(processed_video_indexes)
     metadata["extracted_windows"] = total_windows
     write_json(run_dir / "metadata.json", metadata)
 
@@ -142,8 +174,9 @@ def command_extract(args) -> int:
             {
                 "stage": "extract",
                 "run_id": run_id,
-                "processed_videos": processed_videos,
+                "processed_videos": len(processed_video_indexes),
                 "extracted_windows": total_windows,
+                "requested_experiments": args.num_experiments,
                 "output_dir": str(run_dir),
             },
             indent=2,

@@ -3,17 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .config import DEFAULT_OUTPUT_ROOT
 from .io_utils import ensure_dir, load_metadata, make_run_id, resolve_model_run, run_root, utc_now_iso, write_json
 from .runtime import import_runtime_dependencies, load_window_outputs, write_stacked_latent_comparison_jpg
-
-
-def add_heatmaps_parser(subparsers) -> None:
-    parser = subparsers.add_parser("heatmaps", help="Render stacked latent-difference heatmaps for each extracted window.")
-    parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT, help="Root output directory.")
-    parser.add_argument("--extract-run-id", default=None, help="Extraction run ID. Defaults to the latest extraction run.")
-    parser.add_argument("--model-run-id", default=None, help="Model run ID. Defaults to the latest model run for the selected extraction.")
-    parser.set_defaults(func=command_heatmaps)
 
 
 def command_heatmaps(args) -> int:

@@ -11,29 +11,4 @@ RUN_FOLDERS = {
     "extract": "extractions",
     "model": "model_runs",
     "heatmap": "heatmaps",
-    "stats": "stats_runs",
 }
-STAT_ALIASES = {
-    "all": {
-        "summary",
-        "slice_curve",
-        "dimension_rankings_all",
-        "dimension_rankings_boundary_top",
-        "pca_dim_loadings",
-        "pca_slice_dim_loadings",
-        "spatial_heatmaps",
-    },
-    "dimension_rankings": {"dimension_rankings_all", "dimension_rankings_boundary_top"},
-    "pca": {"pca_dim_loadings", "pca_slice_dim_loadings"},
-}
-SUPPORTED_STATS = sorted(
-    {
-        "summary",
-        "slice_curve",
-        "dimension_rankings_all",
-        "dimension_rankings_boundary_top",
-        "pca_dim_loadings",
-        "pca_slice_dim_loadings",
-        "spatial_heatmaps",
-    }
-)
