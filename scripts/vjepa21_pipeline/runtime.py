@@ -143,14 +143,6 @@ def reshape_tokens(np, tokens, grid_size: int):
     return tokens.reshape(batch, temporal_slices, grid_size, grid_size, embed_dim)
 
 
-def compute_motion_score(np, frames) -> float:
-    if len(frames) < 2:
-        return 0.0
-    sample = np.asarray(frames, dtype=np.float32)
-    diffs = np.abs(sample[1:] - sample[:-1])
-    return float(diffs.mean())
-
-
 def benjamini_hochberg(np, p_values):
     flat = np.asarray(p_values, dtype=np.float64).reshape(-1)
     n = flat.size
@@ -337,7 +329,6 @@ def load_window_outputs(np, model_run_dir: Path, metadata: dict):
                     "slice_magnitudes": data["slice_magnitudes"],
                     "heatmap": data["heatmap"],
                     "boundary_latent_diffs": data["boundary_latent_diffs"] if "boundary_latent_diffs" in data else None,
-                    "motion_score": float(data["motion_score"]),
                 }
             )
     if not outputs:

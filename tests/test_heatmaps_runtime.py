@@ -38,7 +38,6 @@ class HeatmapRuntimeTests(unittest.TestCase):
                 slice_magnitudes=np.ones((19,), dtype=np.float32),
                 heatmap=np.ones((19, 24, 24), dtype=np.float32),
                 boundary_latent_diffs=np.ones((2, 576, 768), dtype=np.float32),
-                motion_score=np.array(0.0, dtype=np.float32),
             )
             metadata = {
                 "windows": [
@@ -98,7 +97,6 @@ class HeatmapRuntimeTests(unittest.TestCase):
                     ],
                     axis=0,
                 ),
-                motion_score=np.array(0.0, dtype=np.float32),
             )
 
             exit_code = command_heatmaps(

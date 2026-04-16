@@ -126,20 +126,14 @@ def command_extract(args) -> int:
             window_dir = ensure_dir(video_dir_out / f"window_{local_index:04d}")
             clip_a_indices = (start + np.arange(args.clip_num_frames) * args.sampling_stride).tolist()
             clip_b_indices = (start + args.window_shift_frames + np.arange(args.clip_num_frames) * args.sampling_stride).tolist()
-            union_start = min(clip_a_indices[0], clip_b_indices[0])
-            union_end = max(clip_a_indices[-1], clip_b_indices[-1])
-            motion_indices = list(range(union_start, union_end + 1))
 
             clip_a_frames = [frames[index] for index in clip_a_indices]
             clip_b_frames = [frames[index] for index in clip_b_indices]
-            motion_frames = [frames[index] for index in motion_indices]
 
             clip_a_dir = ensure_dir(window_dir / "clip_a")
             clip_b_dir = ensure_dir(window_dir / "clip_b")
-            motion_dir = ensure_dir(window_dir / "motion_context")
             save_rgb_frames(cv2, clip_a_frames, clip_a_dir, args.save_format)
             save_rgb_frames(cv2, clip_b_frames, clip_b_dir, args.save_format)
-            save_rgb_frames(cv2, motion_frames, motion_dir, args.save_format)
 
             window_metadata = {
                 "window_id": window_id,
@@ -155,11 +149,9 @@ def command_extract(args) -> int:
                 "sampling_stride": args.sampling_stride,
                 "clip_a_indices": clip_a_indices,
                 "clip_b_indices": clip_b_indices,
-                "motion_indices": motion_indices,
                 "relative_window_dir": str(window_dir.relative_to(run_dir)),
                 "clip_a_dir": str(clip_a_dir.relative_to(run_dir)),
                 "clip_b_dir": str(clip_b_dir.relative_to(run_dir)),
-                "motion_context_dir": str(motion_dir.relative_to(run_dir)),
             }
             write_json(window_dir / "window_metadata.json", window_metadata)
             metadata["windows"].append(window_metadata)

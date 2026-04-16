@@ -6,7 +6,6 @@ from pathlib import Path
 from .io_utils import ensure_dir, load_metadata, make_run_id, resolve_extract_run, run_root, utc_now_iso, write_json
 from .runtime import (
     choose_device,
-    compute_motion_score,
     get_video_processor_crop_size,
     import_runtime_dependencies,
     load_model,
@@ -90,7 +89,6 @@ def command_run_model(args) -> int:
             try:
                 clip_a_frames, _ = read_rgb_frames(cv2, window_dir / "clip_a")
                 clip_b_frames, _ = read_rgb_frames(cv2, window_dir / "clip_b")
-                motion_frames, _ = read_rgb_frames(cv2, window_dir / "motion_context")
             except Exception as exc:
                 metadata["skipped"].append({"window_id": window["window_id"], "reason": f"frame_load_failed:{exc}"})
                 continue
@@ -141,7 +139,6 @@ def command_run_model(args) -> int:
             spatial_mean_signed = signed_delta.mean(axis=(1, 2))
             slice_magnitudes = spatial_mean_abs.mean(axis=1)
             heatmap = abs_delta.mean(axis=-1)
-            motion_score = compute_motion_score(np, motion_frames)
 
             target_dir = ensure_dir(run_dir / window["video_slug"] / Path(window["relative_window_dir"]).name)
             npz_name = target_dir / "window_output.npz"
@@ -152,7 +149,6 @@ def command_run_model(args) -> int:
                 slice_magnitudes=slice_magnitudes,
                 heatmap=heatmap,
                 boundary_latent_diffs=boundary_latent_diffs,
-                motion_score=np.array(motion_score, dtype=np.float32),
             )
 
             window_record = {
@@ -168,7 +164,6 @@ def command_run_model(args) -> int:
                     int(boundary_latent_diffs.shape[1]),
                     int(boundary_latent_diffs.shape[2]),
                 ],
-                "motion_score": motion_score,
             }
             write_json(target_dir / "window_output_metadata.json", window_record)
             metadata["windows"].append(window_record)
